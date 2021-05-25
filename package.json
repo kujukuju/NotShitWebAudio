@@ -5,5 +5,21 @@
   "main": "src/nswa.js",
   "repository": "git@github.com:kujukuju/NotShitWebAudio.git",
   "author": "Kuju <kuju@veraegames.com>",
-  "license": "MIT"
+  "license": "MIT",
+  "keywords": [
+    "nswa",
+    "nswa.js",
+    "not shit web audio",
+    "howler",
+    "howler.js",
+    "audio",
+    "sound",
+    "web audio",
+    "webaudio",
+    "browser",
+    "html5",
+    "html5 audio",
+    "audio sprite",
+    "audiosprite"
+  ]
 }
