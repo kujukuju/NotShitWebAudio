@@ -24,6 +24,7 @@ class SourceInstance {
     _pannerNode;
 
     _playbackRate;
+    _loop;
 
     _lastRateChangeTime;
     _previousAccumulatedTime;
@@ -43,6 +44,7 @@ class SourceInstance {
         this._gainNode = null;
         this._pannerNode = null;
         this._playbackRate = 1;
+        this._loop = source.getLoop();
 
         this._lastRateChangeTime = 0;
         this._previousAccumulatedTime = 0;
@@ -228,6 +230,28 @@ class SourceInstance {
         return this;
     }
 
+    getLoop() {
+        return this._loop;
+    }
+
+    setLoop(loop) {
+        if (this._loop === loop) {
+            return;
+        }
+
+        if (this._connectedBuffer) {
+            this._bufferInstance.loop = loop;
+        }
+    }
+
+    getVolume() {
+        if (!this._gainNode) {
+            return 1;
+        }
+
+        return this._gainNode.gain.value;
+    }
+
     setVolume(volume) {
         if (!this._gainNode) {
             this._createGainNode();
@@ -381,7 +405,7 @@ class SourceInstance {
             }
         }
 
-        console.warn('Creating a gain node for individual audio components is not performant. Consider lowering the volume of the audio file.');
+        // console.warn('Creating a gain node for individual audio components is not performant. Consider lowering the volume of the audio file.');
     }
 
     _connect() {
@@ -398,6 +422,7 @@ class SourceInstance {
         this._bufferInstance.buffer = this._source.getAudioBuffer();
         // TODO should I use setTargetAtTime?
         this._bufferInstance.playbackRate.value = this._playbackRate;
+        this._bufferInstance.loop = this._loop;
 
         // TODO do I have to branch this out logarithmically for it to not clip?
         if (this._pannerNode && this._gainNode) {
