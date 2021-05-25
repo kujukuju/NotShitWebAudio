@@ -39,7 +39,10 @@ class SourceInstance {
         if (this._playTime) {
             return;
         }
-        this._playTime = Date.now() - (offset ?? 0) * 1000;
+        const now = Date.now();
+        this._playTime = now - (offset ?? 0) * 1000;
+        this._lastRateChangeTime = now;
+        this._previousAccumulatedTime = (offset ?? 0) * 1000;
 
         if (this._source.isReady() && !this._connectedBuffer) {
             this._connect();
@@ -56,6 +59,8 @@ class SourceInstance {
 
     stop() {
         this._playTime = 0;
+        this._lastRateChangeTime = 0;
+        this._previousAccumulatedTime = 0;
 
         if (this._sourceLoadedCallback) {
             this._source.removeListener(Source.LISTENER_READY, this._sourceLoadedCallback);
@@ -75,8 +80,9 @@ class SourceInstance {
             return 0;
         }
 
-        // TODO incorrect because it doesn't consider the sample rate
-        return (Date.now() - this._playTime) / 1000.0;
+        return ((Date.now() - this._lastRateChangeTime) * this._playbackRate + this._previousAccumulatedTime) / 1000.0;
+
+        // return (Date.now() - this._playTime) / 1000.0;
     }
 
     seek(time) {
@@ -90,6 +96,15 @@ class SourceInstance {
     }
 
     setRate(rate) {
+        if (this._playbackRate === rate) {
+            return;
+        }
+
+        const now = Date.now();
+        const deltaTime = now - this._lastRateChangeTime;
+        this._previousAccumulatedTime += deltaTime * this._playbackRate;
+        this._lastRateChangeTime = now;
+
         this._playbackRate = rate;
 
         if (this._bufferInstance) {
@@ -116,7 +131,7 @@ class SourceInstance {
 
         // play for real
         this._playing = true;
-        this._bufferInstance.start(0, (Date.now() - this._playTime) / 1000.0);
+        this._bufferInstance.start(0, this.getCurrentTime());
     }
 
     _connect() {
@@ -302,6 +317,19 @@ class Source {
 const NSWA = {
     context: new (window.AudioContext ?? window.webAudioContext)(),
     Source,
+    setListenerOrientation: function(forwardX, forwardY, forwardZ, upX, upY, upZ) {
+        NSWA.context.listener.forwardX = forwardX;
+        NSWA.context.listener.forwardY = forwardY;
+        NSWA.context.listener.forwardZ = forwardZ;
+        NSWA.context.listener.upX = upX;
+        NSWA.context.listener.upY = upY;
+        NSWA.context.listener.upZ = upZ;
+    },
+    setListenerPosition: function(x, y, z) {
+        NSWA.context.listener.positionX = x;
+        NSWA.context.listener.positionY = y;
+        NSWA.context.listener.positionZ = z;
+    },
     _requestedContextResume: false,
     _contextResumeListeners: [],
     _removeArray: function(array, index) {
@@ -361,9 +389,9 @@ const instance = source.create();
 instance.setVolume(0.2);
 instance.play();
 
-setTimeout(() => {
-    instance.setRate(0.5);
-}, 4000);
+// setTimeout(() => {
+//     instance.setRate(0.5);
+// }, 4000);
 
 // let desiredOffset = 0;
 // setInterval(() => {
@@ -372,4 +400,12 @@ setTimeout(() => {
 //     const time = instance.getTime() + desiredOffset;
 //
 //     instance.seek(time);
+// }, 2000);
+
+// setInterval(() => {
+//     instance.setRate(Math.random() * 0.2 + 0.9);
+//
+//     setTimeout(() => {
+//         instance.seek(instance.getCurrentTime());
+//     }, 1000);
 // }, 2000);
