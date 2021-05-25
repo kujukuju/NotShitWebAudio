@@ -1,6 +1,6 @@
 {
   "name": "not-shit-web-audio",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Very simple and performant web audio library designed for games. Better than howler!",
   "main": "src/nswa.js",
   "repository": "git@github.com:kujukuju/NotShitWebAudio.git",
