@@ -6,6 +6,9 @@
   "repository": "git@github.com:kujukuju/NotShitWebAudio.git",
   "author": "Kuju <kuju@veraegames.com>",
   "license": "MIT",
+  "scripts": {
+    "build": "terser "
+  },
   "keywords": [
     "nswa",
     "nswa.js",
@@ -22,4 +25,4 @@
     "audio sprite",
     "audiosprite"
   ]
-}
+},
