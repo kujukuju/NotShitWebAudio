@@ -22,6 +22,7 @@ class SourceInstance {
 
     _gainNode;
     _pannerNode;
+    _scriptNode;
 
     _playbackRate;
     _loop;
@@ -43,6 +44,7 @@ class SourceInstance {
 
         this._gainNode = null;
         this._pannerNode = null;
+        this._scriptNode = null;
         this._playbackRate = 1;
         this._loop = source.getLoop();
 
@@ -95,7 +97,9 @@ class SourceInstance {
 
         if (this._playing) {
             this._playing = false;
-            this._bufferInstance.stop();
+            if (this._bufferInstance.stop) {
+                this._bufferInstance.stop();
+            }
         }
 
         if (this._connectedBuffer) {
@@ -191,6 +195,10 @@ class SourceInstance {
         return this;
     }
 
+    setScriptNode(script) {
+
+    }
+
     getCurrentTime() {
         if (this._lastRateChangeTime === 0) {
             return 0;
@@ -236,12 +244,14 @@ class SourceInstance {
 
     setLoop(loop) {
         if (this._loop === loop) {
-            return;
+            return this;
         }
 
         if (this._connectedBuffer) {
             this._bufferInstance.loop = loop;
         }
+
+        return this;
     }
 
     getVolume() {
@@ -355,7 +365,9 @@ class SourceInstance {
 
         // play for real
         this._playing = true;
-        this._bufferInstance.start(0, this.getCurrentTime());
+        if (this._bufferInstance.start) {
+            this._bufferInstance.start(0, this.getCurrentTime());
+        }
         this._onEvent(SourceInstance.LISTENER_PLAY);
     }
 
@@ -418,11 +430,14 @@ class SourceInstance {
         }
 
         this._connectedBuffer = true;
-        this._bufferInstance = NSWA.context.createBufferSource();
-        this._bufferInstance.buffer = this._source.getAudioBuffer();
+        this._bufferInstance = this._source.createNode();
         // TODO should I use setTargetAtTime?
-        this._bufferInstance.playbackRate.value = this._playbackRate;
-        this._bufferInstance.loop = this._loop;
+        if (this._bufferInstance.playbackRate) {
+            this._bufferInstance.playbackRate.value = this._playbackRate;
+        }
+        if (this._bufferInstance.loop) {
+            this._bufferInstance.loop = this._loop;
+        }
 
         // TODO do I have to branch this out logarithmically for it to not clip?
         if (this._pannerNode && this._gainNode) {
@@ -472,6 +487,163 @@ class SourceInstance {
     }
 }
 
+class Script {
+    _ready;
+    _loaded;
+    _contextRunning;
+
+    _listeners;
+    _onceListeners;
+
+    _path;
+    _name;
+
+    constructor(path, name) {
+        this._ready = false;
+        this._loaded = false;
+
+        this._contextRunning = NSWA.context.state === 'running';
+        if (!this._contextRunning) {
+            NSWA.requestContextResume(this._onchangeContextState.bind(this));
+        }
+
+        this._listeners = {};
+        this._onceListeners = {};
+
+        this._path = path;
+        this._name = name;
+
+        const response = NSWA.context.audioWorklet.addModule(path);
+        response.then(this._onloadResult.bind(this));
+    }
+
+    getVolume() {
+        return 1;
+    }
+
+    isReady() {
+        return this._ready;
+    }
+
+    getLoop() {
+        return false;
+    }
+
+    createNode() {
+        return new AudioWorkletNode(NSWA.context, this._name);
+    }
+
+    create() {
+        return new SourceInstance(this);
+    }
+
+    addEventListener(event, callback, once) {
+        switch (event) {
+            case Source.LISTENER_READY: {
+                if (this._ready) {
+                    callback();
+                    return;
+                }
+            } break;
+
+            default:
+                console.error('Received unknown listener type.', event);
+                return;
+        }
+
+        // add the listener
+        if (once) {
+            if (!this._onceListeners[event]) {
+                this._onceListeners[event] = [];
+            }
+
+            this._onceListeners[event].push(callback);
+        } else {
+            if (!this._listeners[event]) {
+                this._listeners[event] = [];
+            }
+
+            this._listeners[event].push(callback);
+        }
+    }
+
+    removeEventListener(event, callback, once) {
+        if (once) {
+            if (!this._onceListeners[event]) {
+                return;
+            }
+
+            const index = this._onceListeners[event].indexOf(callback);
+            if (index >= 0) {
+                NSWA._removeArray(this._onceListeners[event], index);
+
+                if (this._onceListeners[event].length === 0) {
+                    delete this._onceListeners[event];
+                }
+            }
+        } else {
+            if (!this._listeners[event]) {
+                return;
+            }
+
+            const index = this._listeners[event].indexOf(callback);
+            if (index >= 0) {
+                NSWA._removeArray(this._listeners[event], index);
+
+                if (this._listeners[event].length === 0) {
+                    delete this._listeners[event];
+                }
+            }
+        }
+    }
+
+    _onloadResult() {
+        this._loaded = true;
+
+        this._checkReady();
+    }
+
+    _onEvent(event) {
+        if (this._listeners[event]) {
+            const listeners = this._listeners[event];
+            for (let i = listeners.length - 1; i >= 0; i--) {
+                listeners[i]();
+            }
+        }
+
+        if (this._onceListeners[event]) {
+            const onceListeners = this._onceListeners[event];
+            for (let i = onceListeners.length - 1; i >= 0; i--) {
+                onceListeners[i]();
+            }
+            delete this._onceListeners[event];
+        }
+    }
+
+    _checkReady() {
+        const ready = this._loaded && this._contextRunning;
+        if (this._ready || !ready) {
+            return;
+        }
+        this._ready = true;
+
+        this._onEvent(Source.LISTENER_READY);
+    }
+
+    _onchangeContextState() {
+        if (NSWA.context.state !== 'running') {
+            return;
+        }
+        this._contextRunning = true;
+
+        this._checkReady();
+    }
+}
+
+class Buffer {
+
+}
+
 class Source {
     static LISTENER_READY = 0;
 
@@ -492,8 +664,8 @@ class Source {
         this._ready = false;
         this._loaded = false;
         this._path = path;
-        this._volume = options.volume ?? 1;
-        this._loop = options.loop ?? false;
+        this._volume = options?.volume ?? 1;
+        this._loop = options?.loop ?? false;
 
         this._contextRunning = NSWA.context.state === 'running';
         if (!this._contextRunning) {
@@ -505,8 +677,15 @@ class Source {
         this._listeners = {};
         this._onceListeners = {};
 
-        const response = fetch(path);
-        response.then(this._onloadResult.bind(this));
+        console.log('path', path, path instanceof AudioBuffer);
+        if (path instanceof AudioBuffer) {
+            this._loaded = true;
+            this._audioBuffer = path;
+            this._checkReady();
+        } else {
+            const response = fetch(path);
+            response.then(this._onloadResult.bind(this));
+        }
     }
 
     getPath() {
@@ -515,10 +694,6 @@ class Source {
 
     isReady() {
         return this._ready;
-    }
-
-    getAudioBuffer() {
-        return this._audioBuffer;
     }
 
     getVolume() {
@@ -543,6 +718,13 @@ class Source {
 
     setLoop(loop) {
         this._loop = loop;
+    }
+
+    createNode() {
+        const bufferInstance = NSWA.context.createBufferSource();
+        bufferInstance.buffer = this._audioBuffer;
+
+        return bufferInstance;
     }
 
     create() {
@@ -673,6 +855,7 @@ class Source {
 const NSWA = {
     context: new (window.AudioContext ?? window.webAudioContext)(),
     destination: null,
+    Script,
     Source,
     setListenerOrientation: function(forwardX, forwardY, forwardZ, upX, upY, upZ) {
         // NSWA.context.listener.forwardX.setTargetAtTime(forwardX, NSWA.context.currentTime, 0.1);
