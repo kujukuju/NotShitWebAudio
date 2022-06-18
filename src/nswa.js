@@ -11,6 +11,8 @@ class SourceInstance {
         refDistance: 100,
         rolloffFactor: 100,
     };
+    
+    // buffer -> gain -> [extras] -> panner -> destination
 
     _connectedBuffer;
 
@@ -33,6 +35,8 @@ class SourceInstance {
     _listeners;
     _onceListeners;
 
+    _extraNodes;
+
     constructor(source) {
         this._connectedBuffer = false;
 
@@ -53,6 +57,8 @@ class SourceInstance {
 
         this._listeners = {};
         this._onceListeners = {};
+
+        this._extraNodes = [];
 
         const sourceVolume = source.getVolume();
         if (sourceVolume !== 1) {
@@ -151,12 +157,9 @@ class SourceInstance {
             this._createPannerNode();
         }
 
-        // this._pannerNode.positionX.setTargetAtTime(x, NSWA.context.currentTime, 0.1);
-        // this._pannerNode.positionY.setTargetAtTime(y, NSWA.context.currentTime, 0.1);
-        // this._pannerNode.positionZ.setTargetAtTime(z, NSWA.context.currentTime, 0.1);
-        this._pannerNode.positionX.value = x;
-        this._pannerNode.positionY.value = y;
-        this._pannerNode.positionZ.value = z;
+        this._pannerNode.positionX.linearRampToValueAtTime(x, NSWA.context.currentTime + 0.05);
+        this._pannerNode.positionY.linearRampToValueAtTime(y, NSWA.context.currentTime + 0.05);
+        this._pannerNode.positionZ.linearRampToValueAtTime(z, NSWA.context.currentTime + 0.05);
 
         return this;
     }
@@ -166,12 +169,9 @@ class SourceInstance {
             this._createPannerNode();
         }
 
-        // this._pannerNode.orientationX.setTargetAtTime(x, NSWA.context.currentTime, 0.1);
-        // this._pannerNode.orientationY.setTargetAtTime(y, NSWA.context.currentTime, 0.1);
-        // this._pannerNode.orientationZ.setTargetAtTime(z, NSWA.context.currentTime, 0.1);
-        this._pannerNode.orientationX.value = x;
-        this._pannerNode.orientationY.value = y;
-        this._pannerNode.orientationZ.value = z;
+        this._pannerNode.orientationX.linearRampToValueAtTime(x, NSWA.context.currentTime + 0.05);
+        this._pannerNode.orientationY.linearRampToValueAtTime(y, NSWA.context.currentTime + 0.05);
+        this._pannerNode.orientationZ.linearRampToValueAtTime(z, NSWA.context.currentTime + 0.05);
 
         return this;
     }
@@ -181,16 +181,12 @@ class SourceInstance {
             return this;
         }
 
-        this._pannerNode.disconnect();
-        this._pannerNode = null;
+        const previousNode = this._getPreviousNode(this._pannerNode);
+        const nextNode = this._getNextNode(this._pannerNode);
 
-        if (this._gainNode) {
-            this._gainNode.disconnect();
-            this._gainNode.connect(NSWA.destination);
-        } else {
-            this._bufferInstance.disconnect();
-            this._bufferInstance.connect(NSWA.destination);
-        }
+        this._pannerNode.disconnect();
+        previousNode.disconnect();
+        previousNode.connect(nextNode);
 
         return this;
     }
@@ -268,6 +264,64 @@ class SourceInstance {
         }
 
         this._gainNode.gain.setValueAtTime(volume, NSWA.context.currentTime);
+
+        return this;
+    }
+
+    hasExtraNode(node) {
+        for (let i = 0; i < this._extraNodes.length; i++) {
+            if (this._extraNodes[i] === node) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    addExtraNode(node) {
+        for (let i = 0; i < this._extraNodes.length; i++) {
+            if (this._extraNodes[i] === node) {
+                return this;
+            }
+        }
+
+        this._extraNodes.push(node);
+
+        if (this._connectedBuffer) {
+            const previous = this._getPreviousNode(node);
+            const next = this._getNextNode(node);
+            previous.disconnect();
+            previous.connect(node);
+            node.connect(next);
+        }
+
+        return this;
+    }
+
+    removeExtraNode(node) {
+        let removedNode = false;
+        let previousNode = this._getPreviousNode(node);
+        let nextNode = this._getNextNode(node);
+        for (let i = 0; i < this._extraNodes.length; i++) {
+            if (this._extraNodes[i] === node) {
+                removedNode = true;
+
+                for (let a = i; a < this._extraNodes.length - 1; a++) {
+                    this._extraNodes[a] = this._extraNodes[a + 1];
+                    this._extraNodes.length -= 1;
+                }
+
+                break;
+            }
+        }
+
+        if (!removedNode) {
+            return this;
+        }
+
+        node.disconnect();
+        previousNode.disconnect();
+        previousNode.connect(nextNode);
 
         return this;
     }
@@ -388,15 +442,11 @@ class SourceInstance {
 
         // if the buffer is already connected, stick this after the gain?
         if (this._connectedBuffer) {
-            if (this._gainNode) {
-                this._gainNode.disconnect();
-                this._gainNode.connect(this._pannerNode);
-            } else {
-                this._bufferInstance.disconnect();
-                this._bufferInstance.connect(this._pannerNode);
-            }
-
-            this._pannerNode.connect(NSWA.destination);
+            const previous = this._getPreviousNode(this._pannerNode);
+            const next = this._getNextNode(this._pannerNode);
+            previous.disconnect();
+            previous.connect(this._pannerNode);
+            this._pannerNode.connect(next);
         }
     }
 
@@ -406,18 +456,97 @@ class SourceInstance {
         }
 
         this._gainNode = NSWA.context.createGain();
+        
         if (this._connectedBuffer) {
-            this._bufferInstance.disconnect();
-            this._bufferInstance.connect(this._gainNode);
-
-            if (this._pannerNode) {
-                this._gainNode.connect(this._pannerNode);
-            } else {
-                this._gainNode.connect(NSWA.destination);
-            }
+            const previous = this._getPreviousNode(this._gainNode);
+            const next = this._getNextNode(this._gainNode);
+            previous.disconnect();
+            previous.connect(this._gainNode);
+            this._gainNode.connect(next);
         }
 
         // console.warn('Creating a gain node for individual audio components is not performant. Consider lowering the volume of the audio file.');
+    }
+
+    _getPreviousNode(node) {
+        if (node === this._gainNode) {
+            return this._bufferInstance;
+        } else if (node === this._pannerNode) {
+            if (this._extraNodes.length > 0) {
+                return this._extraNodes[this._extraNodes.length - 1];
+            } else if (this._gainNode) {
+                return this._gainNode;
+            }
+
+            return this._bufferInstance;
+        } else if (node === NSWA.destination) {
+            if (this._pannerNode) {
+                return this._pannerNode;
+            } else if (this._extraNodes.length > 0) {
+                return this._extraNodes[this._extraNodes.length - 1];
+            } else if (this._gainNode) {
+                return this._gainNode;
+            }
+
+            return this._bufferInstance;
+        } else if (this._extraNodes.length > 0) {
+            for (let i = 0; i < this._extraNodes.length; i++) {
+                if (node === this._extraNodes[i]) {
+                    if (i > 0) {
+                        return this._extraNodes[i - 1];
+                    } else if (this._gainNode) {
+                        return this._gainNode;
+                    } else {
+                        return this._bufferInstance;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    _getNextNode(node) {
+        if (node === this._bufferInstance) {
+            if (this._gainNode) {
+                return this._gainNode;
+            } else if (this._extraNodes.length > 0) {
+                return this._extraNodes[0];
+            } else if (this._pannerNode) {
+                return this._pannerNode;
+            }
+
+            return NSWA.destination;
+        } else if (node === this._gainNode) {
+            if (this._extraNodes.length > 0) {
+                return this._extraNodes[0];
+            }
+            if (this._pannerNode) {
+                return this._pannerNode;
+            }
+
+            return NSWA.destination;
+        } else if (node === this._pannerNode) {
+            return NSWA.destination;
+        } else if (this._extraNodes.length > 0) {
+            for (let i = 0; i < this._extraNodes.length; i++) {
+                if (node === this._extraNodes[i]) {
+                    if (i < this._extraNodes.length - 1) {
+                        return this._extraNodes[i + 1];
+                    } else if (this._pannerNode) {
+                        return this._pannerNode;
+                    } else {
+                        return NSWA.destination;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        return null;
     }
 
     _connect() {
@@ -439,19 +568,12 @@ class SourceInstance {
             this._bufferInstance.loop = this._loop;
         }
 
-        // TODO do I have to branch this out logarithmically for it to not clip?
-        if (this._pannerNode && this._gainNode) {
-            this._bufferInstance.connect(this._gainNode);
-            this._gainNode.connect(this._pannerNode);
-            this._pannerNode.connect(NSWA.destination);
-        } else if (this._gainNode) {
-            this._bufferInstance.connect(this._gainNode);
-            this._gainNode.connect(NSWA.destination);
-        } else if (this._pannerNode) {
-            this._bufferInstance.connect(this._pannerNode);
-            this._pannerNode.connect(NSWA.destination);
-        } else {
-            this._bufferInstance.connect(NSWA.destination);
+        let currentNode = this._bufferInstance;
+        let nextNode = this._getNextNode(currentNode);
+        while (nextNode) {
+            currentNode.connect(nextNode);
+            currentNode = nextNode;
+            nextNode = this._getNextNode(currentNode);
         }
     }
 
@@ -461,12 +583,10 @@ class SourceInstance {
         }
         this._connectedBuffer = false;
 
-        this._bufferInstance.disconnect();
-        if (this._gainNode) {
-            this._gainNode.disconnect();
-        }
-        if (this._pannerNode) {
-            this._pannerNode.disconnect();
+        let previousNode = this._getPreviousNode(NSWA.destination);
+        while (previousNode) {
+            previousNode.disconnect();
+            previousNode = this._getPreviousNode(previousNode);
         }
 
         this._bufferInstance = null;
@@ -487,164 +607,7 @@ class SourceInstance {
     }
 }
 
-class Script {
-    _ready;
-    _loaded;
-    _contextRunning;
-
-    _listeners;
-    _onceListeners;
-
-    _path;
-    _name;
-
-    constructor(path, name) {
-        this._ready = false;
-        this._loaded = false;
-
-        this._contextRunning = NSWA.context.state === 'running';
-        if (!this._contextRunning) {
-            NSWA.requestContextResume(this._onchangeContextState.bind(this));
-        }
-
-        this._listeners = {};
-        this._onceListeners = {};
-
-        this._path = path;
-        this._name = name;
-
-        const response = NSWA.context.audioWorklet.addModule(path);
-        response.then(this._onloadResult.bind(this));
-    }
-
-    getVolume() {
-        return 1;
-    }
-
-    isReady() {
-        return this._ready;
-    }
-
-    getLoop() {
-        return false;
-    }
-
-    createNode() {
-        return new AudioWorkletNode(NSWA.context, this._name);
-    }
-
-    create() {
-        return new SourceInstance(this);
-    }
-
-    addEventListener(event, callback, once) {
-        switch (event) {
-            case Source.LISTENER_READY: {
-                if (this._ready) {
-                    callback();
-                    return;
-                }
-            } break;
-
-            default:
-                console.error('Received unknown listener type.', event);
-                return;
-        }
-
-        // add the listener
-        if (once) {
-            if (!this._onceListeners[event]) {
-                this._onceListeners[event] = [];
-            }
-
-            this._onceListeners[event].push(callback);
-        } else {
-            if (!this._listeners[event]) {
-                this._listeners[event] = [];
-            }
-
-            this._listeners[event].push(callback);
-        }
-    }
-
-    removeEventListener(event, callback, once) {
-        if (once) {
-            if (!this._onceListeners[event]) {
-                return;
-            }
-
-            const index = this._onceListeners[event].indexOf(callback);
-            if (index >= 0) {
-                NSWA._removeArray(this._onceListeners[event], index);
-
-                if (this._onceListeners[event].length === 0) {
-                    delete this._onceListeners[event];
-                }
-            }
-        } else {
-            if (!this._listeners[event]) {
-                return;
-            }
-
-            const index = this._listeners[event].indexOf(callback);
-            if (index >= 0) {
-                NSWA._removeArray(this._listeners[event], index);
-
-                if (this._listeners[event].length === 0) {
-                    delete this._listeners[event];
-                }
-            }
-        }
-    }
-
-    _onloadResult() {
-        this._loaded = true;
-
-        this._checkReady();
-    }
-
-    _onEvent(event) {
-        if (this._listeners[event]) {
-            const listeners = this._listeners[event];
-            for (let i = listeners.length - 1; i >= 0; i--) {
-                listeners[i]();
-            }
-        }
-
-        if (this._onceListeners[event]) {
-            const onceListeners = this._onceListeners[event];
-            for (let i = onceListeners.length - 1; i >= 0; i--) {
-                onceListeners[i]();
-            }
-            delete this._onceListeners[event];
-        }
-    }
-
-    _checkReady() {
-        const ready = this._loaded && this._contextRunning;
-        if (this._ready || !ready) {
-            return;
-        }
-        this._ready = true;
-
-        this._onEvent(Source.LISTENER_READY);
-    }
-
-    _onchangeContextState() {
-        if (NSWA.context.state !== 'running') {
-            return;
-        }
-        this._contextRunning = true;
-
-        this._checkReady();
-    }
-}
-
-class Buffer {
-
-}
-
-class Source {
+class SourceBase {
     static LISTENER_READY = 0;
 
     _ready;
@@ -658,14 +621,12 @@ class Source {
 
     _path;
     _volume;
-    _loop;
 
     constructor(path, options) {
         this._ready = false;
         this._loaded = false;
         this._path = path;
         this._volume = options?.volume ?? 1;
-        this._loop = options?.loop ?? false;
 
         this._contextRunning = NSWA.context.state === 'running';
         if (!this._contextRunning) {
@@ -676,16 +637,10 @@ class Source {
 
         this._listeners = {};
         this._onceListeners = {};
+    }
 
-        console.log('path', path, path instanceof AudioBuffer);
-        if (path instanceof AudioBuffer) {
-            this._loaded = true;
-            this._audioBuffer = path;
-            this._checkReady();
-        } else {
-            const response = fetch(path);
-            response.then(this._onloadResult.bind(this));
-        }
+    createNode() {
+        throw 'Invalid.';
     }
 
     getPath() {
@@ -704,35 +659,12 @@ class Source {
         this._volume = volume;
     }
 
-    getDuration() {
-        if (!this._audioBuffer) {
-            return 0;
-        }
-
-        return this._audioBuffer.duration;
-    }
-
-    getLoop() {
-        return this._loop;
-    }
-
-    setLoop(loop) {
-        this._loop = loop;
-    }
-
-    createNode() {
-        const bufferInstance = NSWA.context.createBufferSource();
-        bufferInstance.buffer = this._audioBuffer;
-
-        return bufferInstance;
-    }
-
     create() {
         return new SourceInstance(this);
     }
 
     destroy() {
-        throw 'I don\'t yet have a neeed to destroy audio sources.';
+        throw 'I don\'t yet have a need to destroy audio sources.';
     }
 
     addEventListener(event, callback, once) {
@@ -813,23 +745,7 @@ class Source {
     }
 
     _onloadResult(result) {
-        if (result.status !== 200) {
-            console.error('Could not load audio source.', result.url, result.status, result.statusText);
-            return;
-        }
-
-        result.arrayBuffer().then(this._onloadArrayBuffer.bind(this));
-    }
-
-    _onloadArrayBuffer(arrayBuffer) {
-        NSWA.context.decodeAudioData(arrayBuffer).then(this._onloadAudioBuffer.bind(this));
-    }
-
-    _onloadAudioBuffer(audioBuffer) {
-        this._loaded = true;
-        this._audioBuffer = audioBuffer;
-
-        this._checkReady();
+        throw 'Invalid.';
     }
 
     _checkReady() {
@@ -852,6 +768,117 @@ class Source {
     }
 }
 
+class Source extends SourceBase {
+    _loop;
+
+    constructor(path, options) {
+        super(path, options);
+
+        this._loop = options?.loop ?? false;
+
+        const response = fetch(path);
+        response.then(this._onloadResult.bind(this));
+    }
+
+    createNode() {
+        const bufferInstance = NSWA.context.createBufferSource();
+        bufferInstance.buffer = this._audioBuffer;
+
+        return bufferInstance;
+    }
+
+    getDuration() {
+        if (!this._audioBuffer) {
+            return 0;
+        }
+
+        return this._audioBuffer.duration;
+    }
+
+    getLoop() {
+        return this._loop;
+    }
+
+    setLoop(loop) {
+        this._loop = loop;
+    }
+
+    _onloadResult(result) {
+        if (result.status !== 200) {
+            console.error('Could not load audio source.', result.url, result.status, result.statusText);
+            return;
+        }
+
+        result.arrayBuffer().then(this._onloadArrayBuffer.bind(this));
+    }
+
+    _onloadArrayBuffer(arrayBuffer) {
+        NSWA.context.decodeAudioData(arrayBuffer).then(this._onloadAudioBuffer.bind(this));
+    }
+
+    _onloadAudioBuffer(audioBuffer) {
+        this._loaded = true;
+        this._audioBuffer = audioBuffer;
+
+        this._checkReady();
+    }
+}
+
+class ScriptSource extends SourceBase {
+    _name;
+
+    static _loadingNameCallbacks = {};
+    static _loadedNames = {};
+
+    constructor(path, name, options) {
+        super(path, options);
+
+        this._name = name;
+
+        if (Script._loadedNames[name]) {
+            this._onloadResult();
+        } else {
+            if (Script._loadingNameCallbacks[name]) {
+                Script._loadingNameCallbacks[name].push(() => {
+                    this._onloadResult();
+                });
+            } else {
+                Script._loadingNameCallbacks[name] = [];
+
+                const response = NSWA.context.audioWorklet.addModule(path);
+                response.then(this._onloadResult.bind(this));
+            }
+        }
+    }
+
+    createNode() {
+        return new AudioWorkletNode(NSWA.context, this._name);
+    }
+
+    _onloadResult() {
+        this._loaded = true;
+
+        if (!Script._loadedNames[this._name]) {
+            Script._loadedNames[this._name] = true;
+
+            const callbacks = Script._loadingNameCallbacks[this._name];
+            delete Script._loadingNameCallbacks[this._name];
+
+            for (let i = 0; i < callbacks.length; i++) {
+                callbacks[i]();
+            }
+        }
+
+        this._checkReady();
+    }
+}
+
+class NodeBase {
+    constructor() {
+        
+    }
+}
+
 const NSWA = {
     context: new (window.AudioContext ?? window.webAudioContext)(),
     destination: null,
@@ -861,23 +888,23 @@ const NSWA = {
         // NSWA.context.listener.forwardX.setTargetAtTime(forwardX, NSWA.context.currentTime, 0.1);
         // NSWA.context.listener.forwardY.setTargetAtTime(forwardY, NSWA.context.currentTime, 0.1);
         // NSWA.context.listener.forwardZ.setTargetAtTime(forwardZ, NSWA.context.currentTime, 0.1);
-        NSWA.context.listener.forwardX.value = forwardX;
-        NSWA.context.listener.forwardY.value = forwardY;
-        NSWA.context.listener.forwardZ.value = forwardZ;
-        // NSWA.context.listener.upX.setTargetAtTime(upX, NSWA.context.currentTime, 0.1);
-        // NSWA.context.listener.upY.setTargetAtTime(upY, NSWA.context.currentTime, 0.1);
-        // NSWA.context.listener.upZ.setTargetAtTime(upZ, NSWA.context.currentTime, 0.1);
-        NSWA.context.listener.upX.value = upX;
-        NSWA.context.listener.upY.value = upY;
-        NSWA.context.listener.upZ.value = upZ;
+        NSWA.context.listener.forwardX.linearRampToValueAtTime(forwardX, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.forwardY.linearRampToValueAtTime(forwardY, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.forwardZ.linearRampToValueAtTime(forwardZ, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.upX.linearRampToValueAtTime(upX, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.upY.linearRampToValueAtTime(upY, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.upZ.linearRampToValueAtTime(upZ, NSWA.context.currentTime + 0.05);
     },
     setListenerPosition: function(x, y, z) {
-        // NSWA.context.listener.positionX.setTargetAtTime(x, NSWA.context.currentTime, 0.1);
-        // NSWA.context.listener.positionY.setTargetAtTime(y, NSWA.context.currentTime, 0.1);
-        // NSWA.context.listener.positionZ.setTargetAtTime(z, NSWA.context.currentTime, 0.1);
-        NSWA.context.listener.positionX.value = x;
-        NSWA.context.listener.positionY.value = y;
-        NSWA.context.listener.positionZ.value = z;
+        // NSWA.context.listener.positionX.setValueAtTime(x, NSWA.context.currentTime);
+        // NSWA.context.listener.positionY.setValueAtTime(y, NSWA.context.currentTime);
+        // NSWA.context.listener.positionZ.setValueAtTime(z, NSWA.context.currentTime);
+        NSWA.context.listener.positionX.linearRampToValueAtTime(x, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.positionY.linearRampToValueAtTime(y, NSWA.context.currentTime + 0.05);
+        NSWA.context.listener.positionZ.linearRampToValueAtTime(z, NSWA.context.currentTime + 0.05);
+        // NSWA.context.listener.positionX.value = x;
+        // NSWA.context.listener.positionY.value = y;
+        // NSWA.context.listener.positionZ.value = z;
     },
     setVolume(volume) {
         NSWA.destination.gain.setValueAtTime(volume, NSWA.context.currentTime);
@@ -937,6 +964,13 @@ const NSWA = {
     _inputListener: function() {
         NSWA.context.resume();
     },
+    _createWorkletURL: function(script) {
+        const blob = new Blob([script]);
+        return new URL.createObjectURL(blob);
+    },
+    _createWorklet: function(url, name) {
+
+    }
 };
 
 // NSWA.context.audioWorklet.addModule('libs/nswamerger.js').then(result => {
