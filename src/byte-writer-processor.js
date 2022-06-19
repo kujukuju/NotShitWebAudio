@@ -35,7 +35,7 @@ class ByteWriterProcessor extends AudioWorkletProcessor {
 
     process(inputs, outputs, parameters) {
         this.stride = parameters.stride[0];
-        this.playBufferWrites = parameters.writePlayBuffer[0];
+        this.playBufferWrites = parameters.playBufferWrites[0];
 
         const output = outputs[0][0];
         if (!this.playing || !output) {

@@ -13,7 +13,7 @@ class BytePitchShiftedReaderProcessor extends AudioWorkletProcessor {
     gInit;
     gFrameLength;
     gOutput;
-    
+    s
     bufferedData;
     bufferedDataCount;
     outData;
