@@ -36,6 +36,7 @@ class SourceInstance {
     _onceListeners;
 
     _extraNodes;
+    _queuedProperties;
 
     constructor(source) {
         this._connectedBuffer = false;
@@ -59,6 +60,7 @@ class SourceInstance {
         this._onceListeners = {};
 
         this._extraNodes = [];
+        this._queuedProperties = null;
 
         const sourceVolume = source.getVolume();
         if (sourceVolume !== 1) {
@@ -396,6 +398,26 @@ class SourceInstance {
         }
     }
 
+    getProperty(name) {
+        if (!this._bufferInstance) {
+            return null;
+        }
+
+        this._bufferInstance.parameters.get(name).value;
+    }
+
+    setProperty(name, value) {
+        if (!this._bufferInstance) {
+            this._queuedProperties = this._queuedProperties || {};
+            this._queuedProperties[name] = value;
+            return this;
+        }
+
+        this._bufferInstance.parameters.get(name).setValueAtTime(value, NSWA.context.currentTime);
+
+        return this;
+    }
+
     _areExtraNodesReady() {
         let ready = true;
         for (let i = 0; i < this._extraNodes.length; i++) {
@@ -574,6 +596,12 @@ class SourceInstance {
 
         this._connectedBuffer = true;
         this._bufferInstance = this._source.createNode();
+        if (this._queuedProperties) {
+            for (const property in this._queuedProperties) {
+                this.setProperty(property, this._queuedProperties[property])
+            }
+            this._queuedProperties = null;
+        }
         // TODO should I use setTargetAtTime?
         if (this._bufferInstance.playbackRate) {
             this._bufferInstance.playbackRate.value = this._playbackRate;
@@ -972,6 +1000,8 @@ class NodeBase extends ListenerBase {
         }
 
         this._node.parameters.get(name).setValueAtTime(value, NSWA.context.currentTime);
+
+        return this;
     }
 
     isReady() {
@@ -1004,9 +1034,195 @@ class NodeBase extends ListenerBase {
     }
 }
 
+class ByteReaderNode extends NodeBase {
+    constructor() {
+        super(BYTE_READER_PROCESSOR, 'byte-reader-processor');
+    }
+
+    getStride() {
+        return this.getProperty('stride');
+    }
+
+    setStride(stride) {
+        this.setProperty('stride', stride);
+    }
+}
+
+class BytePitchShiftedReaderNode extends NodeBase {
+    constructor() {
+        super(BYTE_PITCH_SHIFTED_READER_PROCESSOR, 'byte-pitch-shifted-reader-processor');
+
+        this.setProperty('sampleRate', NSWA.context.sampleRate);
+    }
+
+    getStride() {
+        return this.getProperty('stride');
+    }
+
+    setStride(stride) {
+        this.setProperty('stride', stride);
+    }
+
+    getPitchShift() {
+        return this.getProperty('pitchShift');
+    }
+
+    setPitchShift(pitchShift) {
+        this.setProperty('pitchShift', pitchShift);
+    }
+
+    getQuality() {
+        return this.getProperty('quality');
+    }
+
+    setQuality(quality) {
+        this.setProperty('quality', quality);
+    }
+}
+
+class BassTrebleNode extends NodeBase {
+    constructor() {
+        super(BASS_TREBLE_PROCESSOR, 'bass-treble-processor');
+
+        this.setProperty('sampleRate', NSWA.context.sampleRate);
+    }
+
+    getBassGain() {
+        return this.getProperty('bassGain');
+    }
+
+    setBassGain(bassGain) {
+        this.setProperty('bassGain', bassGain);
+    }
+
+    getTrebleGain() {
+        return this.getProperty('trebleGain');
+    }
+
+    setTrebleGain(trebleGain) {
+        this.setProperty('trebleGain', trebleGain);
+    }
+
+    getGain() {
+        return this.getProperty('gain');
+    }
+
+    setGain(gain) {
+        this.setProperty('gain', gain);
+    }
+}
+
+class ByteOutput extends SourceInstance {
+    constructor() {
+        super(new ScriptSource(BYTE_WRITER_PROCESSOR, 'byte-writer-processor'));
+    }
+
+    getStride() {
+        return this.getProperty('stride');
+    }
+
+    setStride(stride) {
+        this.setProperty('stride', stride);
+    }
+
+    getPlayBufferWrites() {
+        return this.getProperty('playBufferWrites');
+    }
+
+    setPlayBufferWrites(playBufferWrites) {
+        this.setProperty('playBufferWrites', playBufferWrites);
+    }
+}
+
+class MicrophoneInput {
+    onBytes;
+    readerNode;
+
+    constructor() {
+        navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
+            const microphone = NSWA.context.createMediaStreamSource(stream);
+
+            this.readerNode = new ByteReaderNode();
+            this.readerNode.addEventListener(NSWA.Source.LISTENER_READY, () => {
+                this.readerNode.getNode().port.onmessage = (event) => {
+                    const data = event.data;
+
+                    if (this.onBytes) {
+                        this.onBytes(data);
+                    }
+                };
+
+                microphone.connect(this.readerNode.getNode());
+            });
+        });
+    }
+
+    getStride() {
+        return this.readerNode.getStride();
+    }
+
+    setStride(stride) {
+        this.readerNode.setStride(stride);
+    }
+}
+
+class MicrophonePitchShiftedInput {
+    onBytes;
+    readerNode;
+
+    constructor() {
+        navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
+            const microphone = NSWA.context.createMediaStreamSource(stream);
+
+            this.readerNode = new BytePitchShiftedReaderNode();
+            this.readerNode.addEventListener(NSWA.Source.LISTENER_READY, () => {
+                this.readerNode.getNode().port.onmessage = (event) => {
+                    const data = event.data;
+
+                    if (this.onBytes) {
+                        this.onBytes(data);
+                    }
+                };
+
+                microphone.connect(this.readerNode.getNode());
+            });
+        });
+    }
+
+    getStride() {
+        return this.readerNode.getStride();
+    }
+
+    setStride(stride) {
+        this.readerNode.setStride(stride);
+    }
+
+    getPitchShift() {
+        return this.readerNode.getPitchShift();
+    }
+
+    setPitchShift(pitchShift) {
+        this.readerNode.setPitchShift(pitchShift);
+    }
+
+    getQuality() {
+        return this.readerNode.getQuality();
+    }
+
+    setQuality(quality) {
+        this.readerNode.setQuality(quality);
+    }
+}
+
 const NSWA = {
+    ByteReaderNode,
+    BytePitchShiftedReaderNode,
+    ByteSource,
+    BassTrebleNode,
     context: new (window.AudioContext ?? window.webAudioContext)(),
     destination: null,
+    MicrophoneInput,
+    MicrophonePitchShiftedInput,
     NodeBase,
     ScriptSource,
     SourceBase,
