@@ -80,7 +80,7 @@ class SourceInstance {
         this._lastRateChangeTime = Date.now();
         this._previousAccumulatedTime = (offset ?? 0) * 1000;
 
-        if (this._source.isReady() && this._areExtraNodesReady() && !this._connectedBuffer) {
+        if (this._source.isReady() && !this._connectedBuffer) {
             this._connect();
         }
 
@@ -315,8 +315,9 @@ class SourceInstance {
 
                 for (let a = i; a < this._extraNodes.length - 1; a++) {
                     this._extraNodes[a] = this._extraNodes[a + 1];
-                    this._extraNodes.length -= 1;
                 }
+
+                this._extraNodes.length -= 1;
 
                 break;
             }
@@ -416,6 +417,10 @@ class SourceInstance {
         this._bufferInstance.parameters.get(name).setValueAtTime(value, NSWA.context.currentTime);
 
         return this;
+    }
+
+    getNode() {
+        return this._bufferInstance;
     }
 
     _areExtraNodesReady() {
@@ -590,7 +595,7 @@ class SourceInstance {
             return;
         }
 
-        if (!this._source.isReady() || !this._areExtraNodesReady()) {
+        if (!this._source.isReady()) {
             return;
         }
 
@@ -613,7 +618,7 @@ class SourceInstance {
         let currentNode = this._bufferInstance;
         let nextNode = this._getNextNode(currentNode);
         while (nextNode) {
-            currentNode.connect(NSWA.getNode(nextNode));
+            NSWA.getNode(currentNode).connect(NSWA.getNode(nextNode));
             currentNode = nextNode;
             nextNode = this._getNextNode(currentNode);
         }
@@ -901,8 +906,6 @@ class ScriptSource extends SourceBase {
     constructor(script, name, options) {
         super(NSWA._createWorkletURL(script), options);
 
-        console.log(this._path);
-
         this._name = name;
 
         if (ScriptSource._loadedNames[name]) {
@@ -915,7 +918,6 @@ class ScriptSource extends SourceBase {
             } else {
                 ScriptSource._loadingNameCallbacks[name] = [];
 
-                console.log('requested ', this._name, this._path);
                 const response = NSWA.context.audioWorklet.addModule(this._path);
                 response.then(this._onloadResult.bind(this)).catch(error => console.error('ScriptSource', error));
             }
@@ -927,7 +929,6 @@ class ScriptSource extends SourceBase {
     }
 
     _onloadResult() {
-        console.log('loaded ', this._name);
         this._loaded = true;
 
         if (!ScriptSource._loadedNames[this._name]) {
@@ -1132,6 +1133,13 @@ class ByteOutput extends SourceInstance {
     setPlayBufferWrites(playBufferWrites) {
         this.setProperty('playBufferWrites', playBufferWrites);
     }
+
+    writeBytes(bytes) {
+        const node = this.getNode();
+        if (node) {
+            node.port.postMessage(bytes);
+        }
+    }
 }
 
 class MicrophoneInput {
@@ -1139,10 +1147,10 @@ class MicrophoneInput {
     readerNode;
 
     constructor() {
+        this.readerNode = new ByteReaderNode();
+
         navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
             const microphone = NSWA.context.createMediaStreamSource(stream);
-
-            this.readerNode = new ByteReaderNode();
             this.readerNode.addEventListener(NSWA.Source.LISTENER_READY, () => {
                 this.readerNode.getNode().port.onmessage = (event) => {
                     const data = event.data;
@@ -1171,10 +1179,10 @@ class MicrophonePitchShiftedInput {
     readerNode;
 
     constructor() {
+        this.readerNode = new BytePitchShiftedReaderNode();
+
         navigator.mediaDevices.getUserMedia({audio: true}).then(stream => {
             const microphone = NSWA.context.createMediaStreamSource(stream);
-
-            this.readerNode = new BytePitchShiftedReaderNode();
             this.readerNode.addEventListener(NSWA.Source.LISTENER_READY, () => {
                 this.readerNode.getNode().port.onmessage = (event) => {
                     const data = event.data;
@@ -1215,9 +1223,9 @@ class MicrophonePitchShiftedInput {
 }
 
 const NSWA = {
-    ByteReaderNode,
+    ByteOutput,
     BytePitchShiftedReaderNode,
-    ByteSource,
+    ByteReaderNode,
     BassTrebleNode,
     context: new (window.AudioContext ?? window.webAudioContext)(),
     destination: null,
@@ -1519,7 +1527,6 @@ class BytePitchShiftedReaderProcessor extends AudioWorkletProcessor {
     }
 
     constructGlobalArrays() {
-        console.log(this.gFrameLength);
         this.gInFIFO = new Array(this.gFrameLength);
         this.gOutFIFO = new Array(this.gFrameLength);
         this.gFFTworksp = new Array(2 * this.gFrameLength);
